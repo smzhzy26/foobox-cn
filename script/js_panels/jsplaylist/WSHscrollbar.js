@@ -257,14 +257,7 @@ oScrollBar = function(id, object_name, x, y, w, h, total_items, item_height, off
 	};
 
 	this.setCursorPosFromOffset = function() {
-		return;
-		this.cursorY = Math.round((this.y + this.buttonHeight) + this.offset * (this.cursorAreaHeight / this.total));
-		if (this.cursorY + this.cursorHeight > this.cursorAreaY + this.cursorAreaHeight) {
-			this.cursorY = (this.cursorAreaY + this.cursorAreaHeight) - this.cursorHeight;
-		};
-		if (this.cursorY < this.cursorAreaY) {
-			this.cursorY = this.cursorAreaY;
-		};
+		// 历史遗留：光标位置现由 setCursor() / updateCursorPos() 维护，此函数保留为空以兼容既有调用
 	};
 
 	this.cursorCheck = function(event, x, y) {

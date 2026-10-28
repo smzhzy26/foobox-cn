@@ -63,6 +63,23 @@ oColumn = function() {
 	};
 };
 
+// 列头/菜单排序统一入口：被锁定的播放列表（强制排序的自动播放列表等）会被 foobar 核心静默拒绝排序，
+// 这里改为给出可见反馈，避免“点击排序没有任何反应”
+function sort_active_playlist(pattern, direction, quiet) {
+	var locked = plman.GetPlaylistLockedActions ? plman.GetPlaylistLockedActions(plman.ActivePlaylist) : [];
+	if (locked.indexOf("ReorderItems") >= 0) {
+		var plname = plman.GetPlaylistName(plman.ActivePlaylist);
+		console.log("WSHheaderbar: sorting refused (playlist locked): " + plname);
+		if (!quiet && !cHeaderBar.lock_hint_shown) {
+			cHeaderBar.lock_hint_shown = true;
+			fb.ShowPopupMessage("当前播放列表「" + plname + "」被锁定，foobar2000 拒绝改变其排序。\r\n\r\n常见原因：该列表是勾选了“强制排序”的自动播放列表（如面板创建的历史记录/最常播放/最近添加等）。\r\n\r\n如需手动排序：\r\n· 打开播放列表管理器，右键该列表 → 智能列表属性...，取消“强制排序”；\r\n· 或将曲目复制到普通播放列表后再排序。", "foobox 播放列表");
+		};
+		return;
+	};
+	if (typeof direction == "undefined") plman.SortByFormatV2(plman.ActivePlaylist, pattern);
+	else plman.SortByFormatV2(plman.ActivePlaylist, pattern, direction);
+};
+
 oHeaderBar = function() {
 	this.columns = [];
 	this.borders = [];
@@ -190,8 +207,8 @@ oHeaderBar = function() {
 					if (this.columns[j].tf != "null" || this.columns[j].sortOrder != "null") {
 						// draw sort indicator (direction)
 						if (j == this.sortedColumnId) {
-							sx = Math.floor(cx + this.columns[j].w / 2 - 3);
-							sh = cy + 1;
+							var sx = Math.floor(cx + this.columns[j].w / 2 - 3);
+							var sh = cy + 1;
 							images.sortdirection && gr.DrawImage(images.sortdirection, sx, sh, images.sortdirection.Width, images.sortdirection.Height, 0, 0, images.sortdirection.Width, images.sortdirection.Height, (this.sortedColumnDirection > 0 ? 180 : 0), 130);
 						};
 					};
@@ -223,8 +240,8 @@ oHeaderBar = function() {
 					if (this.columns[j].tf != "null" || this.columns[j].sortOrder != "null") {
 						// draw sort indicator (direction)
 						if (j == this.sortedColumnId) {
-							sx = Math.floor(cx + this.columns[j].w / 2 - 3);
-							sh = cy + 1;
+							var sx = Math.floor(cx + this.columns[j].w / 2 - 3);
+							var sh = cy + 1;
 							images.sortdirection && gr.DrawImage(images.sortdirection, sx, sh, images.sortdirection.Width, images.sortdirection.Height, 0, 0, images.sortdirection.Width, images.sortdirection.Height, (this.sortedColumnDirection > 0 ? 180 : 0), 130);
 						};
 					};
@@ -264,17 +281,17 @@ oHeaderBar = function() {
 	};
 
 	this.saveColumns = function(col_num_changed) {
-		var tmp;
 		this.writeColumnTable();
 		if(col_num_changed) {
-			tmp = "";
 			layout.columnWidth.splice(0, layout.columnWidth.length);
-			for (var j = 0; j < layout.ids.length - 1; j++){
+			// 每个布局都要写入一份完整宽度串（tmp 必须逐布局重置，否则会累加）
+			for (var j = 0; j < layout.ids.length; j++){
+				var tmp = "";
 				for (var i = 0; i < this.columns.length; i++) {
 					tmp = tmp + this.columns[i].percent;
-					if (i < this.columns.length - 1) tmp = tmp + "^^"
+					if (i < this.columns.length - 1) tmp = tmp + "^^";
 				}
-			layout.columnWidth.push(tmp);
+				layout.columnWidth.push(tmp);
 			}
 			save_layout();
 		}
@@ -519,10 +536,10 @@ oHeaderBar = function() {
 								this.columnDragged_saved = 3;
 								cHeaderBar.sortRequested = true;
 								if (this.columns[this.columnDraggedId].sortOrder != "null") {
-									plman.SortByFormatV2(plman.ActivePlaylist, this.columns[this.columnDraggedId].sortOrder, this.sortedColumnDirection);
+									sort_active_playlist(this.columns[this.columnDraggedId].sortOrder, this.sortedColumnDirection);
 								}
 								else {
-									plman.SortByFormatV2(plman.ActivePlaylist, this.columns[this.columnDraggedId].tf, this.sortedColumnDirection);
+									sort_active_playlist(this.columns[this.columnDraggedId].tf, this.sortedColumnDirection);
 								};
 								update_playlist(layout.collapseGroupsByDefault);
 							}
@@ -687,6 +704,8 @@ oHeaderBar = function() {
 			_groups.AppendMenuItem(p.list.totalRows > 0 && !layout.autocollapse && cGroup.expanded_height > 0 && cGroup.collapsed_height > 0 ? MF_STRING : MF_GRAYED | MF_DISABLED, 90, "展开全部");	
 		};
 		_sorting.AppendTo(_menu, MF_STRING, "排序");
+		_sorting.AppendMenuItem(MF_STRING, 204, "恢复默认排序");
+		_sorting.AppendMenuSeparator();
 		_sorting.AppendMenuItem(MF_STRING, 205, "专辑艺术家");
 		_sorting.AppendMenuItem(MF_STRING, 219, "艺术家");
 		_sorting.AppendMenuItem(MF_STRING, 206, "专辑");
@@ -732,7 +751,7 @@ oHeaderBar = function() {
 			this.saveColumnsWidth();
 			if(setting_init && p.settings.page_loaded[4]){
 				var arr = [];
-				fin = layout.ids.length;
+				var fin = layout.ids.length;
 				for (var i = 0; i < fin; i++) {
 					arr.push(layout.ids[i]);
 				};
@@ -757,7 +776,7 @@ oHeaderBar = function() {
 			layout.gopts[0] = layout.pattern_idx.toString();
 			save_layout();
 			get_covercahe_config();
-			plman.SortByFormatV2(plman.ActivePlaylist, p.list.groupby[layout.pattern_idx].sortOrder, 1);
+			sort_active_playlist(p.list.groupby[layout.pattern_idx].sortOrder, 1, true);
 			p.list.updateHandleList(plman.ActivePlaylist, false);
 			p.list.setItems(true);
 			p.scrollbar.setCursor(p.list.totalRowVisible, p.list.totalRows, p.list.offset);
@@ -858,44 +877,49 @@ oHeaderBar = function() {
 			get_grprow_minimum(this.columns[0].w);
 			update_playlist(layout.collapseGroupsByDefault, 2);
 			break;
+		case (idx == 204):
+			// 按当前分组依据的排序规则重排：恢复该分组模板定义的默认顺序
+			var gbSort = p.list.groupby[layout.pattern_idx] ? p.list.groupby[layout.pattern_idx].sortOrder : "";
+			sort_active_playlist((gbSort && gbSort != "null") ? gbSort : sort_pattern_albumartist, 1);
+			break;
 		case (idx == 205):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_albumartist, 1);
+			sort_active_playlist(sort_pattern_albumartist, 1);
             break;
 		case (idx == 219):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_artist, 1);
+			sort_active_playlist(sort_pattern_artist, 1);
             break;
 		case (idx == 206):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_album, 1);
+			sort_active_playlist(sort_pattern_album, 1);
             break;
 		case (idx == 207):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_tracknumber);
+			sort_active_playlist(sort_pattern_tracknumber);
             break;
 		case (idx == 208):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_title, 1);
+			sort_active_playlist(sort_pattern_title, 1);
             break;
 		case (idx == 209):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_path, 1);
+			sort_active_playlist(sort_pattern_path, 1);
             break;
 		case (idx == 210):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_date, -1);
+			sort_active_playlist(sort_pattern_date, -1);
             break;
 		case (idx == 211):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_genre, 1);
+			sort_active_playlist(sort_pattern_genre, 1);
             break;
 		case (idx == 212):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_rating, -1);
+			sort_active_playlist(sort_pattern_rating, -1);
             break;
 		case (idx == 213):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_bitrate, -1);
+			sort_active_playlist(sort_pattern_bitrate, -1);
             break;
 		case (idx == 214):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_modified, -1);
+			sort_active_playlist(sort_pattern_modified, -1);
             break;
 		case (idx == 215):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_playcount, -1);
+			sort_active_playlist(sort_pattern_playcount, -1);
             break;
 		case (idx == 216):
-			plman.SortByFormatV2(plman.ActivePlaylist, sort_pattern_codec, 1);
+			sort_active_playlist(sort_pattern_codec, 1);
             break;
 		case (idx == 217):
 			plman.SortByFormat(plman.ActivePlaylist,"",false);

@@ -3,6 +3,11 @@
 const MF_GRAYED = 0x00000001;
 const MF_STRING = 0x00000000;
 
+function confirmPlaylistAction(prompt, caption, continue_confirmation) { // shared confirm dialog used by missingArt/missingBio/missingRev
+	const wsh = popUpBox.isHtmlDialogSupported() ? popUpBox.confirm(caption, prompt, '确定', '取消', '', '', continue_confirmation) : true;
+	if (wsh) continue_confirmation('ok', $.wshPopup(prompt, caption));
+}
+
 class MenuManager {
 	constructor(name, clearArr, baseMenu) {
 		this.baseMenu = baseMenu || 'baseMenu';
@@ -236,7 +241,7 @@ class MenuItems {
 			str: `${$.titlecase(cfg.cfgBaseName)} server`,
 			flags: MF_GRAYED,
 			separator: true,
-			hide: !$.server || !this.shift || !vk.k('ctrl')
+			hide: !this.shift || !vk.k('ctrl')
 		});
 
 		const b = ppt.artistView ? 'Bio' : 'Rev';
@@ -582,13 +587,13 @@ class MenuItems {
 	fresh() {
 		if (panel.block() || !ppt.cycItem || panel.zoom() || panel.id.lyricsSource && lyrics.display() && lyrics.scroll) return;
 		if (ppt.artistView) {
-			this.counter.bio++;
+			this.counter.bio += 2; // 2s tick: keeps cycle time in sync with timer.image() interval
 			if (this.counter.bio < ppt.cycTimeItem) return;
 			this.counter.bio = 0;
 			if (panel.art.list.length < 2) return;
 			this.wheel(1, true, false);
 		} else {
-			this.counter.rev++;
+			this.counter.rev += 2; // 2s tick: keeps cycle time in sync with timer.image() interval
 			if (this.counter.rev < ppt.cycTimeItem) return;
 			this.counter.rev = 0;
 			if (panel.alb.list.length < 2) return;
@@ -863,10 +868,8 @@ class MenuItems {
 				this.sendToPlaylist(m, n2, n3);
 			}
 		}
-		const caption = this.popUpTitle;
 		const prompt = this.popUpText(n2, n3);
-		const wsh = popUpBox.isHtmlDialogSupported() ? popUpBox.confirm(caption, prompt, '确定', '取消', '', '', continue_confirmation) : true;
-		if (wsh) continue_confirmation('ok', $.wshPopup(prompt, caption));
+		confirmPlaylistAction(prompt, this.popUpTitle, continue_confirmation);
 	}
 
 	missingBio(n1, n2, n3) {
@@ -896,10 +899,8 @@ class MenuItems {
 				this.sendToPlaylist(m, n2, n3);
 			}
 		}
-		const caption = this.popUpTitle;
 		const prompt = this.popUpText(n2, n3);
-		const wsh = popUpBox.isHtmlDialogSupported() ? popUpBox.confirm(caption, prompt, '确定', '取消', '', '', continue_confirmation) : true;
-		if (wsh) continue_confirmation('ok', $.wshPopup(prompt, caption));
+		confirmPlaylistAction(prompt, this.popUpTitle, continue_confirmation);
 	}
 
 	missingRev(n1, n2, n3) {
@@ -940,10 +941,8 @@ class MenuItems {
 				this.sendToPlaylist(m, n2, n3);
 			}
 		}
-		const caption = this.popUpTitle;
 		const prompt = this.popUpText(n2, n3);
-		const wsh = popUpBox.isHtmlDialogSupported() ? popUpBox.confirm(caption, prompt, '确定', '取消', '', '', continue_confirmation) : true;
-		if (wsh) continue_confirmation('ok', $.wshPopup(prompt, caption));
+		confirmPlaylistAction(prompt, this.popUpTitle, continue_confirmation);
 	}
 
 	popUpText(n2, n3) {
@@ -1116,7 +1115,6 @@ class MenuItems {
 			'blacklist': $.sortKeys(this.img.list.blacklist)
 		}, null, 3), true);
 		img.check();
-		window.NotifyOthers('bio_blacklist', 'bio_blacklist');
 	}
 
 	setPaste(i) {
@@ -1135,7 +1133,6 @@ class MenuItems {
 					ppt[`source${b}`] = i;
 					txt[n].source[s] = true;
 				}
-				window.NotifyOthers('bio_getText', 'bio_getText');
 				txt.grab();
 				if (ppt.text_only) txt.paint();
 				break;
@@ -1150,7 +1147,6 @@ class MenuItems {
 			case 3:
 				if (!this.undo.text.length && $.file(this.undo.path)) {
 					fso.DeleteFile(this.undo.path);
-					window.NotifyOthers('bio_reload', 'bio_reload');
 					if (panel.stndItem()) window.Reload();
 					else {
 						txt.artistFlush();
@@ -1163,7 +1159,6 @@ class MenuItems {
 				$.buildPth(this.undo.folder);
 				$.save(this.undo.path, this.undo.text, true);
 				this.undo.text = '#!#';
-				window.NotifyOthers('bio_getText', 'bio_getText');
 				txt.grab();
 				if (ppt.text_only) txt.paint();
 				break;

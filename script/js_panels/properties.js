@@ -112,11 +112,6 @@ function _textWidth(value, font) {
 	return _gr.CalcTextWidth(value, font);
 }
 
-function _toRGB(a) {
-	const b = a - 0xFF000000;
-	return [b >> 16, b >> 8 & 0xFF, b & 0xFF];
-}
-
 function _tt(value) {
 	if (tooltip.Text != value) {
 		tooltip.Text = value;
@@ -125,7 +120,7 @@ function _tt(value) {
 }
 
 function getstr(langpack, name){
-	var str = eval(langpack)[name];
+	var str = langpack[name];
 	if(!str) str = name;
 	return str;
 }
@@ -141,8 +136,7 @@ function _splitv() {
 			upperh = y - 1;
 			panel_setsize();
 			upperRatio = upperh/wh;
-				window.SetProperty("Upper panel ratio", Math.round(upperRatio*100000)/100000);
-				window.Repaint();
+			window.Repaint();
 		}
 		if(x > 0 && y > upperh - 1 && x < ww && y < upperh + 4) {
 			this.hover = true;
@@ -155,7 +149,10 @@ function _splitv() {
 		if(this.hover) this.drag = true;
 	}
 	this.lbtn_up = (x, y) => {
-		if(this.drag) this.drag = false;
+		if(this.drag){
+			this.drag = false;
+			window.SetProperty("Upper panel ratio", Math.round(upperRatio*100000)/100000);
+		}
 	}
 	this.repaint = () => {
 		window.RepaintRect(0, upperh - 1, ww, 5);
@@ -272,22 +269,26 @@ function _list() {
 	
 	this.wheel = (s) => {
 		if (this.trace(cursorX, cursorY)) {
-			if (this.items > this.rows) {
-				let offset = this.offset - (s * 3);
-				if (offset < 0) {
-					offset = 0;
-				}
-				if (offset + this.rows > this.items) {
-					offset = this.items - this.rows;
-				}
-				if (this.offset != offset) {
-					this.offset = offset;
-					window.RepaintRect(this.x, this.y, this.w, this.h);
-				}
-			}
+			this.scroll(s);
 			return true;
 		} else {
 			return false;
+		}
+	}
+
+	this.scroll = (s) => { // 滚动列表，不依赖鼠标位置（键盘↑↓也走这里）
+		if (this.items > this.rows) {
+			let offset = this.offset - (s * 3);
+			if (offset < 0) {
+				offset = 0;
+			}
+			if (offset + this.rows > this.items) {
+				offset = this.items - this.rows;
+			}
+			if (this.offset != offset) {
+				this.offset = offset;
+				window.RepaintRect(this.x, this.y, this.w, this.h);
+			}
 		}
 	}
 	
@@ -380,10 +381,10 @@ function _list() {
 	this.key_down = (k) => {
 		switch (k) {
 		case VK_UP:
-			this.wheel(1);
+			this.scroll(1);
 			return true;
 		case VK_DOWN:
-			this.wheel(-1);
+			this.scroll(-1);
 			return true;
 		default:
 			return false;
@@ -419,19 +420,12 @@ function _list() {
 			item.width = _textWidth(item.value, panel.fonts.normal);
 			this.text_x = Math.max(this.text_x, _textWidth(item.name, panel.fonts.normal) + 20);
 		});
-		this.items = this.data.length;
-		this.offset = 0;
-		this.index = 0;
-	}
-	
-	this.reset = () => {
-		this.items = 0;
-		this.data = [];
-		this.artist = '';
-		panel.item_focus_change();
-	}
-	
-	this.init = () => {
+	this.items = this.data.length;
+	this.offset = 0;
+	this.index = 0;
+}
+
+this.init = () => {
 		this.add_meta = (f) => {
 			for (let i = 0; i < f.MetaCount; i++) {
 				let name = f.MetaName(i);
@@ -445,7 +439,7 @@ function _list() {
 					url = name.toLowerCase() + (num == 1 ? ' IS ' : ' HAS ') + '\"' + value + '\"';
 					if(_add){
 						this.data.push({
-							name : getstr("lang_meta", _name),
+							name : getstr(lang_meta, _name),
 							value : value,
 							url : url
 						});
@@ -486,7 +480,7 @@ function _list() {
 				const value = f.InfoValue(i).replace(/\s{2,}/g, ' ');
 				if(name != "md5"){
 					tmp.push({
-						name : getstr("lang_tech", _name),
+						name : getstr(lang_tech, _name),
 						value : value,
 						url : '%__' + _name + '% IS ' + value
 					});

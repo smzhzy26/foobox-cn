@@ -2,7 +2,6 @@
 
 class Setting {
 	constructor(key, default_value, type) {
-		this.checkImagesTimer = null;
 		this.key = key;
 		this.default_value = default_value;
 		this.type = type;
@@ -43,14 +42,12 @@ class Settings {
 		// this.key_list = {}; debug
 
 		this.cfgBaseName = name;
-		this.storageFolder = `${my_utils.packageInfo.Directories.Storage}\\`;
+		this.storageFolder = fb.ProfilePath + 'foobox\\data\\biography\\';
 		$.buildPth(this.storageFolder);
 		this.bio = `${this.storageFolder + this.cfgBaseName}.cfg`;
 		this.item_properties = `${this.storageFolder}item_properties.json`;
-		this.item_properties_alternative_grouping = `${this.storageFolder}item_properties_alternative_grouping.json`;
 		this.nowplaying = `${this.storageFolder}nowplaying.txt`;
 
-		this.cacheTime = 0;
 		this.cfg = $.jsonParse(this.bio, {}, 'file-utf8'); // Regorxxx <- Force UTF-8 ->
 		this.lfmSim = true;
 
@@ -60,15 +57,26 @@ class Settings {
 			ok: false
 		}
 
-		this.local = $.file('C:\\check_local\\1450343922.txt');
-		if (!this.local) ppt.themed = false;
 		this.remap = {}
 		this.pth = {}
 		this.sup = {}
 		this.tf = {}
+		this.dispPth = {} // 设置页"当前实际使用路径"提示用的路径（值为空时显示，不写入配置）
+		// 内置默认路径：这 7 项设置的默认值留空；留空时运行时取用这里的路径
+		this.defPth = {
+			foLfmRev: '%profile%\\yttm\\review\\lastfm\\$lower($cut(%BIO_ALBUMARTIST%,1))',
+			foLfmBio: '%profile%\\yttm\\biography\\lastfm\\$lower($cut(%BIO_ARTIST%,1))',
+			foWikiRev: '%profile%\\yttm\\review\\wikipedia\\$lower($cut(%BIO_ALBUMARTIST%,1))',
+			foWikiBio: '%profile%\\yttm\\biography\\wikipedia\\$lower($cut(%BIO_ARTIST%,1))',
+			foImgArt: '%profile%\\yttm\\art_img\\$lower($cut(%BIO_ARTIST%,1))\\%BIO_ARTIST%',
+			foImgRev: '%profile%\\yttm\\rev_img\\$lower($cut(%BIO_ALBUMARTIST%,1))\\%BIO_ALBUMARTIST%',
+			foLfmSim: '%profile%\\yttm\\lastfm\\$lower($cut(%BIO_ARTIST%,1))'
+		};
 
 		this.photoRecycler = `${this.storageFolder}oldPhotosForDeletion\\`;
 		this.settingsKeys = [];
+		this.writeDefer = 0; // > 0: 变更只留在内存，批次结束时统一写盘一次
+		this.writeDirty = false;
 		
 		this.caPath = `${this.storageFolder}biography-cache`;
 		this.cachePath = `${this.caPath}\\`;
@@ -84,6 +92,16 @@ class Settings {
 	// Methods
 
 	init(settings) {
+		// 启动时补齐/迁移的默认值可能有几十项，合并为一次写盘
+		this.beginBatch();
+		try {
+			this.build(settings);
+		} finally {
+			this.endBatch();
+		}
+	}
+
+	build(settings) {
 		const update = this.checkCfg();
 		// migrate old tag settings (0-4 AllMusic removed; shift 5-13 down by 5)
 		if (this.cfg.tagEnabled13 !== undefined) {
@@ -99,6 +117,15 @@ class Settings {
 			// this.validate(v); debug
 			this.add(v);
 		});
+		// 迁移（只做一次）：旧版本把内置默认路径存进了 cfg；这些设置现默认留空，
+		// 把"恰好等于内置默认"的值清空。加标记避免之后用户再手填同样内容又被清掉。
+		if (!this.cfg.pthEmptyMigrated) {
+			Object.keys(this.defPth).forEach(v => {
+				if (this[v] === this.defPth[v]) this[v] = '';
+			});
+			this.cfg.pthEmptyMigrated = 1;
+			this.writeDirty = true;
+		}
 		if (update) {
 			delete this.cfg.langLfm;
 			delete this.cfg.langLfmFallback;
@@ -106,10 +133,6 @@ class Settings {
 			this.tagName1 = 'Album Statistics Last.fm';
 			this.tagName3 = 'Artist Statistics Last.fm';
 		}
-		this.autoCacheTime = $.clamp(this.autoCacheTime, 0, 4);
-		this.cacheTime = [0, 28, 14, 7, 1][this.autoCacheTime] * 86400000;
-		this.checkTempFiles();
-		this.checkTempImages();
 		this.parse();
 	}
 
@@ -173,6 +196,26 @@ class Settings {
 
 	set(key, new_value) {
 		this.cfg[key] = new_value;
+		if (this.writeDefer) { // 批次内：只标记，不落盘
+			this.writeDirty = true;
+			return;
+		}
+		this.writeCfg();
+	}
+
+	// 批量写：begin/end 之间的所有变更（含 parse() 里的夹取修正）只在内存中生效，
+	// 结束时整文件写一次，替代原先"每改一个 key 就整文件重写"的做法。
+	beginBatch() {
+		this.writeDefer++;
+	}
+
+	endBatch() {
+		if (this.writeDefer > 0) this.writeDefer--;
+		if (!this.writeDefer && this.writeDirty) this.writeCfg();
+	}
+
+	writeCfg() {
+		this.writeDirty = false;
 		$.save(this.bio, JSON.stringify($.sortKeys(this.cfg), null, 3), true);
 	}
 
@@ -182,7 +225,6 @@ class Settings {
 
 	checkCfg() {
 		if (!$.file(this.item_properties)) $.save(this.item_properties, item_properties, true);
-		if (!$.file(this.item_properties_alternative_grouping)) $.save(this.item_properties_alternative_grouping, item_properties_alternative_grouping, true);
 		if (!$.file(this.nowplaying)) $.save(this.nowplaying, nowplaying, true);
 		if ($.file(this.bio)) return;
 		const orig_cfg = `${fb.ProfilePath}yttm\\biography.cfg`;
@@ -205,116 +247,6 @@ class Settings {
 		}
 	}
 
-	checkFiles(v) {
-		if (!$.folder(v) || !$.server) return;
-		const foArr = [];
-		const folder = fso.GetFolder(v);
-		let subFolders = folder.SubFolders;
-		if (!subFolders.Count) try {fso.DeleteFolder(folder); return} catch (e) {} // rem empty last.fm etc
-		for (const subFolder of subFolders) {
-			foArr.push(v + subFolder.Name);
-		}
-		let i = 0;
-		const timer = setInterval(() => {
-			if ($.server && i < foArr.length) {
-				let files = utils.Glob(foArr[i] + '\\*');
-				files.forEach(w => {
-					if (Date.now() - $.lastAccessed(w) > this.cacheTime) {
-						try {fso.DeleteFile(w);} catch (e) {}
-					}
-				});
-				files = utils.Glob(foArr[i] + '\\*');
-				if (!files.length) try {fso.DeleteFolder(foArr[i]);} catch (e) {}
-				i++;
-			} else {
-				clearInterval(timer);
-			}
-		}, 1000);
-	}
-
-	checkImages(v) {
-		if (!$.folder(v) || !$.server) return;
-		const foArr = [];
-		const folder = fso.GetFolder(v);
-		let chars = folder.SubFolders;
-		if (!chars.Count) try {fso.DeleteFolder(folder); return} catch (e) {}
-		for (const char of chars) { // a
-			const folder2 = fso.GetFolder(char); // artist
-			let artists = folder2.SubFolders;
-			for (const artist of artists) {
-				foArr.push(v + char.Name + '\\' + artist.Name);
-			}
-		}
-		let i = 0;
-		const timer = setInterval(() => {
-			if ($.server && i < foArr.length) {
-				let files = utils.Glob(foArr[i] + '\\*');
-				if (!files.length) try {fso.DeleteFolder(foArr[i]);} catch (e) {}
-				else {
-					let accessed = 0;
-						files.forEach(w => {
-							accessed = Math.max(accessed, $.lastAccessed(w));
-						});
-						if (Date.now() - accessed > this.cacheTime) {
-							try {fso.DeleteFolder(foArr[i]);} catch (e) {}
-						}
-				}
-				i++;
-			} else {
-				clearInterval(timer);
-				chars = folder.SubFolders;
-				for (const char of chars) { // a
-					const folder2 = fso.GetFolder(char); // artist
-					let artists = folder2.SubFolders;
-					if (!artists.Count) try {fso.DeleteFolder(folder2);} catch (e) {} // rem empty
-				}
-			}
-		}, 100);
-	}
-
-	checkTempFiles() {
-		if (!this.autoCache || !this.autoCacheTime || !$.server) return;
-		let tmpFileTimer = setTimeout(() => {
-			if (!$.server) {
-				clearTimeout(tmpFileTimer);
-				return;
-			}
-			const pths = ['biography\\lastfm\\', 'biography\\wikipedia\\', 'review\\lastfm\\', 'review\\wikipedia\\', 'lastfm\\'];
-			const paths = pths.filter(v => $.folder(this.cachePath + v));
-				let i = 0;
-				let fileTimer = setInterval(() => {
-					if ($.server && i < paths.length) {
-						this.checkFiles(this.cachePath + paths[i]);
-						i++;
-					} else {
-						clearInterval(fileTimer);
-					}
-				}, 40000);
-		}, 300000);
-		this.supCache = false;
-	}
-
-	checkTempImages() {
-		if (!this.autoCache || !this.autoCacheTime || !$.server) return;
-		let tmpImageTimer = setTimeout(() => {
-			if (!$.server) {
-				clearTimeout(tmpImageTimer);
-				return;
-			}
-			const pths = ['art_img\\', 'rev_img\\'];
-			const paths = pths.filter(v => $.folder(this.cachePath + v));
-			let i = 0;
-			let imageTimer = setInterval(() => {
-				if ($.server && i < paths.length) {
-					this.checkImages(this.cachePath + paths[i]);
-					i++;
-				} else {
-					clearInterval(imageTimer);
-				}
-			}, 600000);
-		}, 30000);
-		this.supCache = false;
-	}
 
 	createCfg(settings) {
 		settings.forEach(v => {
@@ -348,11 +280,7 @@ class Settings {
 				const lang_ix = this.lang.ix;
 				const cache_type = this.autoCache;
 				this.updateCfg($.jsonParse(new_cfg, {}));
-				if (cache_type != this.autoCache) {
-					this.setCacheMode();
-					return;
-				}
-				window.NotifyOthers(`bio_newCfg${ppt.serverName}`, new_cfg);
+				if (cache_type != this.autoCache) this.setCacheMode();
 				if (lang_ix != this.lang.ix) this.setLanguage(this.lang.ix);
 			}
 			if (new_ppt || new_cfg) return;
@@ -391,7 +319,6 @@ class Settings {
 		dialogWindow = $.jsonParse(dialogWindow);
 		dialogWindow.version = `v${window.ScriptInfo.Version}`;
 		dialogWindow = JSON.stringify(dialogWindow);
-		if (!panel.id.numServersChecked) panel.checkNumServers();
 		if (popUpBox.isHtmlDialogSupported()) popUpBox.config(JSON.stringify(ppt), JSON.stringify(cfg), dialogWindow, ok_callback, this.lang.ix, $.folder(cfg.photoRecycler));
 		else {
 			popUpBox.ok = false;
@@ -404,7 +331,7 @@ class Settings {
 		const items = ['foLfmRev', 'foLfmBio', 'foImgArt', 'foLfmSim', 'foWikiRev', 'foWikiBio', 'foImgCov', 'fnImgCov'];
 		const tfIni = ['tfAlbumArtist', 'tfArtist', 'tfAlbum', 'tfTitle', 'tfComposition'];
 		const tfItems = ['albumArtist', 'artist', 'album', 'title', 'composition'];
-		const tfNames = ['%BIO_ALBUMARTIST%', '%BIO_ARTIST%', '%BIO_ALBUM%', '%BIO_TITLE%', '%BIO_ALBUM%'];
+		const tfNames = ['%BIO_ALBUMARTIST%', '%BIO_ARTIST%', '%BIO_ALBUM%', '%BIO_TITLE%', '%BIO_COMPOSITION%'];
 
 		tfNames.forEach((v, i) => { // remove self
 			this.tf[tfItems[i]] = this[tfIni[i]].replace(RegExp(v, 'gi'), '');
@@ -419,12 +346,24 @@ class Settings {
 
 		tfItems.forEach(v => this.tf[v] = this.substituteTf(this.tf[v]));
 
+		// 内置默认路径落在"包数据"缓存目录下（原 %profile%\\yttm\\ 前缀换成 biography-cache）
+		const cachePth = d => d.replace('%profile%\\yttm\\', $.tfEscape(this.cachePath));
+		const dispCachePth = d => d.replace('%profile%\\yttm\\', '%storage_folder%\\biography-cache\\');
+		this.dispPth = {};
 		items.forEach((v, i) => {
-			if (!this.autoCache || i > 5) this.pth[v] = this[v];
-			else {
-				this.pth[v] = this.remap[v] = this[`${v}_internal`].default_value.replace('%profile%\\yttm\\', $.tfEscape(this.cachePath));
-			}
-			this.pth[v] = this.substituteTf(this.pth[v]);
+			const def = this.defPth[v]; // 仅 7 项路径类设置存在内置默认；foImgCov/fnImgCov 无
+			const auto = this.autoCache && i <= 5 && !!def;
+			let base;
+			if (!def) base = this[v]; // 自动保存封面：没有内置默认，直接用设置值
+			else if (auto) {
+				base = cachePth(def);
+				this.remap[v] = base;
+			} else base = this[v] || cachePth(def); // 留空 -> 内置默认（与"默认"模式同一目录，切换模式不挪数据）
+			this.pth[v] = this.substituteTf(base);
+		});
+		// 设置页提示：7 项路径设置统一按"值为空 -> 默认缓存路径"给出（foImgRev 只用 remap，不在 items 里）
+		Object.keys(this.defPth).forEach(v => {
+			this.dispPth[v] = this[v] ? this[v] : dispCachePth(this.defPth[v]);
 		});
 
 		if (!this.classicalModeEnable) {
@@ -452,18 +391,12 @@ class Settings {
 		this.albCovFolder = this.substituteTf(this.expandPath(this.foCycCov));
 		this.artCusImgFolder = this.substituteTf(this.expandPath(this.foCycPhoto));
 
-		this.exp = Math.max(this.exp, 28);
+		this.exp = this.exp > 0 ? Math.max(this.exp, 30) : 0; // 0: 禁止自动更新；否则最小 30 天
 		this.getLangIndex();
 		if (!this.lang.ok) this.language = 'EN';
 		this.menuSimilarNum = $.clamp(this.menuSimilarNum, 0, 10);
 		this.lfmSim = this.dlLfmSim;
 		if (this.lfmSim && this.menuSimilarNum < 7 && (!this.tagEnabled5 || this.tagEnabled8 < 7)) this.lfmSim = false;
-		if (this.local) {
-			this.pth.foLfmSim = this.pth.foLfmSim.replace('{BA9557CE-7B4B-4E0E-9373-99F511E81252}', '{F5E9D9EB-42AD-4A47-B8EE-C9877A8E7851}').replace('biography-cache', 'find-&-play-cache');
-			this.lfmSim = false;
-			this.imgRevHQ = true;
-			if (!this.autoCache) this.supCache = true;
-		}
 		this.photoNum = $.clamp(this.photoNum, 1, 40);
 		this.photoLimit = this.photoLimit ? Math.max(this.photoLimit, this.photoNum, this.photoAutoAdd * 5) : 0;
 		
@@ -474,10 +407,10 @@ class Settings {
 		this.tagEnabled8 = $.clamp(this.tagEnabled8, 1, 6);
 		
 		if (this.autoCache) {
-			this.remap['foImgRev'] = this['foImgRev_internal'].default_value.replace('%profile%\\yttm\\', $.tfEscape(this.cachePath));
+			this.remap['foImgRev'] = cachePth(this.defPth['foImgRev']);
 		} else {
 			bioRevItems.forEach(v => {
-				this.remap[v] = this[v];
+				this.remap[v] = this[v] || cachePth(this.defPth[v]); // 留空 -> 内置默认
 				if (v.endsWith('Rev')) this.remap[v] = this.remap[v].replace(/%BIO_ALBUMARTIST%|%BIO_ARTIST%/gi, '%BIO_ALBUMARTIST%'); // simplify later substitutions + convert case
 				else this.remap[v] = this.remap[v].replace(/%BIO_ARTIST%|%BIO_ALBUMARTIST%/gi, '%BIO_ARTIST%'); // simplify later substitutions + convert case
 			});
@@ -489,7 +422,7 @@ class Settings {
 			replace = this.supReplace.split('|');
 			const arr2 = replace.map(v => v.trim() || 'yttm\\bio_supplemental');
 			bioRevItems.forEach(v => {
-				this.sup[v] = this[v];
+				this.sup[v] = this[v] || cachePth(this.defPth[v]); // 留空 -> 内置默认
 				if (arr1.length == arr2.length) arr1.forEach((w, j) => {
 					this.sup[v] = this.sup[v].replace(RegExp(w, 'gi'), arr2[j]);
 				});
@@ -505,13 +438,8 @@ class Settings {
 
 		if (this.cusCov) { // custom covers
 			this.cusCovPaths = [];
-			for (let i = 0; i < 3; i++) {
-				let nm = this[`cusCov${i}`];
-				if (nm.length) {
-					nm = this.substituteTf(this.expandPath(nm));
-					this.cusCovPaths.push(nm);
-				}
-			}
+			const nm = this.cusCov0;
+			if (nm && nm.length) this.cusCovPaths.push(this.substituteTf(this.expandPath(nm)));
 		}
 	}
 
@@ -538,7 +466,7 @@ class Settings {
 			replace = sReplace.split('|');
 			const arr2 = replace.map(v => v.trim() || 'yttm\\bio_supplemental');
 			if (arr1.length == arr2.length) {
-				n = this.foLfmBio
+				n = this.expandPath(this.dispPth.foLfmBio || this.foLfmBio);
 				arr1.forEach((v, i) => n = n.replace(RegExp(v, 'gi'), arr2[i]));
 			} else n = 'Invalid find and replace'
 			n = n.replace(/%BIO_ARTIST%|%BIO_ALBUMARTIST%/gi, '%BIO_ARTIST%');
@@ -563,12 +491,10 @@ class Settings {
 	resetCfg() {
 		cfg.move(true);
 		window.Reload();
-		window.NotifyOthers('bio_refresh', 'bio_refresh');
 	}
 
 	setCacheMode() {
 		window.Reload();
-		window.NotifyOthers('bio_refresh', 'bio_refresh');
 	}
 
 	setLanguage(i) {
@@ -612,14 +538,8 @@ class Settings {
 		txt.getSubHeadWidths();
 		txt.artCalc();
 		txt.albCalc();
-		$.server = true;
-		panel.notifyTimestamp = Date.now();
-		window.NotifyOthers(`bio_notServer${ppt.serverName}`, panel.notifyTimestamp);
-		if ($.server) {
-			server.setLanguage(this.language);
-			panel.callServer(2, panel.id.focus, '', 1);
-			window.NotifyOthers('bio_refresh', 'bio_refresh');
-		}
+		server.setLanguage(this.language);
+		panel.callServer(2, panel.id.focus, '', 1);
 	}
 
 	setTag(i, handles) {
@@ -660,16 +580,21 @@ class Settings {
 				break;
 			}
 		}
-		if (i < 9) window.NotifyOthers('bio_refresh', 'bio_refresh');
+		if (i < 9) return;
 	}
 
 	updateCfg(new_cfg) {
-		this.settingsKeys.forEach(v => cfg[v] = this.cfg[v] = new_cfg[v + '_internal'].value);
-		tag.setGenres();
-		this.parse();
+		this.beginBatch();
+		try {
+			this.settingsKeys.forEach(v => cfg[v] = this.cfg[v] = new_cfg[v + '_internal'].value);
+			tag.setGenres();
+			this.parse();
+		} finally {
+			this.endBatch();
+		}
 	}
 }
-const cfg = new Settings(ppt.serverName);
+const cfg = new Settings('biography');
 
 let settings = [
 	['Album Review [Lastfm] Auto-Download', false, 'boolean', 'dlLfmRev'],
@@ -692,16 +617,15 @@ let settings = [
 	['Lastfm & Wikipedia Language Fallback To English', false, 'boolean', 'languageFallback'],
 	['Wikipedia English Genres', true, 'boolean', 'wikipediaEnGenres'],
 
-	['Album Review [Lastfm] Folder', '%profile%\\yttm\\review\\lastfm\\$lower($cut(%BIO_ALBUMARTIST%,1))', 'text', 'foLfmRev'],
-	['Biography [Lastfm] Folder', '%profile%\\yttm\\biography\\lastfm\\$lower($cut(%BIO_ARTIST%,1))', 'text', 'foLfmBio'],
-	['Album Review [Wikipedia] Folder', '%profile%\\yttm\\review\\wikipedia\\$lower($cut(%BIO_ALBUMARTIST%,1))', 'text', 'foWikiRev'],
-	['Biography [Wikipedia] Folder', '%profile%\\yttm\\biography\\wikipedia\\$lower($cut(%BIO_ARTIST%,1))', 'text', 'foWikiBio'],
-	['Image [Artist] Folder', '%profile%\\yttm\\art_img\\$lower($cut(%BIO_ARTIST%,1))\\%BIO_ARTIST%', 'text', 'foImgArt'],
-	['Image [Review] Folder', '%profile%\\yttm\\rev_img\\$lower($cut(%BIO_ALBUMARTIST%,1))\\%BIO_ALBUMARTIST%', 'text', 'foImgRev'],
+	['Album Review [Lastfm] Folder', '', 'text', 'foLfmRev'],
+	['Biography [Lastfm] Folder', '', 'text', 'foLfmBio'],
+	['Album Review [Wikipedia] Folder', '', 'text', 'foWikiRev'],
+	['Biography [Wikipedia] Folder', '', 'text', 'foWikiBio'],
+	['Image [Artist] Folder', '', 'text', 'foImgArt'],
+	['Image [Review] Folder', '', 'text', 'foImgRev'],
 
 	['Auto Cache', 1, 'num', 'autoCache'],
-	['Auto Cache Time', 0, 'num', 'autoCacheTime'],
-	['Save Folder', '%profile%\\yttm\\lastfm\\$lower($cut(%BIO_ARTIST%,1))', 'text', 'foLfmSim'],
+	['Save Folder', '', 'text', 'foLfmSim'],
 
 	['Image [Artist] Initial Download Number (1-20)', 5, 'num', 'photoNum'],
 	['Image [Artist] Auto-Add New', true, 'boolean', 'photoAutoAdd'],
@@ -714,7 +638,7 @@ let settings = [
 	['Folder', '%storage_folder%\\biography-cache\\art_img\\$lower($cut(%BIO_ARTIST%,1))\\%BIO_ARTIST%', 'text', 'foCycCov'],
 	['Folder', '%storage_folder%\\biography-cache\\art_img\\$lower($cut(%BIO_ARTIST%,1))\\%BIO_ARTIST%', 'text', 'foCycPhoto'],
 	['Album Name Auto-Clean', false, 'boolean', 'albStrip'],
-	['Cache Expiry (days: minimum 28)', 60, 'num', 'exp'],
+	['Auto-Update Interval (days: min 30, 0 disables auto-update)', 0, 'num', 'exp'],
 
 	['Review Image Quality 0-Medium 1-High', false, 'boolean', 'imgRevHQ'],
 	['Search: Include Partial Matches', true, 'boolean',  'partialMatchEnabled'],
@@ -736,7 +660,6 @@ let settings = [
 	['Write Tag: Album Genre Wikipedia', true, 'boolean', 'tagEnabled6'],
 	['Write Tag: Artist Genre Wikipedia', true, 'boolean', 'tagEnabled7'],
 	['Write Tag: Similar Artists Last.fm: Number to Write (0-100)', 5, 'num', 'tagEnabled8'],
-	['Notify Tags: Current Track', false, 'boolean', 'notifyTags'],
 
 	['Tag Name: Album Genre Last.fm', 'Album Genre Last.fm', 'text', 'tagName0'],
 	['Tag Name: Album Statistics Last.fm', 'Album Statistics Last.fm', 'text', 'tagName1'],
@@ -754,9 +677,7 @@ let settings = [
 	['Tagger Last.fm Genre Translate', 'alt country>alternative country, canterbury>canterbury scene, chanson francaise>chanson fran\u00e7aise, christmas>christmas music, christmas songs>christmas music, eletronica>electronica, motown soul>motown, musicals>musical, neoclassical>neoclassicism, orchestra>orchestral, popular>pop, prog>progressive, rnb>r&b, rhythm and blues>r&b, rb>r&b, relaxing>relaxation, relax>relaxation, rock & roll>rock and roll, rock n roll>rock and roll, tropicalia>tropic\u00e1lia, xmas>christmas music, ye ye>y\u00e9-y\u00e9', 'text', 'translate'],
 
 	['Image [Cover] Check Custom Paths', false, 'boolean', 'cusCov'],
-	['Image [Cover] Custom Path 1 [Full Path Minus Extension]', '', 'text', 'cusCov0'],
-	['Image [Cover] Custom Path 2 [Full Path Minus Extension]', '', 'text', 'cusCov1'],
-	['Image [Cover] Custom Path 3 [Full Path Minus Extension]', '', 'text', 'cusCov2'],
+	['Image [Cover] Custom Path [Full Path Minus Extension]', '', 'text', 'cusCov0'],
 
 	['Use Supplemental Cache', false, 'boolean', 'supCache'],
 	['Supplemental Cache [Use Find>Replace on SAVE paths]', 'yttm>yttm\\bio_supplemental', 'text', 'supFo'],
@@ -890,10 +811,6 @@ let item_properties =
 	"uppercase": "ANV|MB"
 }`
 
-let item_properties_alternative_grouping = item_properties
-.replace(/("元数据\*":\s{\s*?"show":\s)false/, '$1' + true)
-.replace(/(("元数据"|"人气"|"Last.fm"|"维基百科"):\s{\s*?"show":\s)true/g, '$1' + false);
-
 let nowplaying = `艺术家: %BIO_ARTIST%$crlf()
 $crlf()
 标题: %BIO_TITLE%$crlf()
@@ -905,5 +822,4 @@ $if2(%playback_time%,0:00)[ / %length%]`;
 cfg.init(settings);
 settings = undefined;
 item_properties = undefined;
-item_properties_alternative_grouping = undefined;
 nowplaying = undefined;
